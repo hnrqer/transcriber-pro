@@ -150,7 +150,7 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 
 	language := r.FormValue("language")
 	if language == "" {
-		language = "en"
+		language = "auto"
 	}
 
 	jobID := uuid.New().String()

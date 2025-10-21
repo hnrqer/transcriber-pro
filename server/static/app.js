@@ -155,7 +155,7 @@ class WhisperApp {
         console.log('[WhisperApp] Companion connected:', info);
 
         this.elements.connectionStatus.className = 'connection-status connected';
-        this.elements.statusText.textContent = `Connected (${info.device})`;
+        this.elements.statusText.textContent = 'Connected';
 
         this.elements.serverInstructions.style.display = 'none';
         this.elements.uploadSection.style.display = 'block';

@@ -156,6 +156,7 @@ func (e *TranscriptionEngine) Transcribe(ctx context.Context, jobID, audioPath, 
 		return
 	}
 
+	log.Printf("[Job %s] Setting language: %s", jobID, language)
 	if err := context.SetLanguage(language); err != nil {
 		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Failed to set language: %v", err))
 		return
@@ -187,10 +188,14 @@ func (e *TranscriptionEngine) Transcribe(ctx context.Context, jobID, audioPath, 
 		return
 	}
 
+	// Get the detected language (either what was set or what was auto-detected)
+	detectedLanguage := context.DetectedLanguage()
+	log.Printf("[Job %s] Input language: %s, Detected language: %s", jobID, language, detectedLanguage)
+
 	result := &TranscriptionResult{
 		Text:     "",
 		Segments: []TranscriptionSegment{},
-		Language: language,
+		Language: detectedLanguage,
 	}
 
 	for {
