@@ -12,12 +12,10 @@ help:
 	@echo "  1. Get current version from latest git tag"
 	@echo "  2. Bump version according to type"
 	@echo "  3. Create and push new git tag"
-	@echo "  4. Download source tarball (available immediately)"
-	@echo "  5. Calculate SHA256"
-	@echo "  6. Update Homebrew formula"
-	@echo "  7. Commit and push formula"
-	@echo ""
-	@echo "Note: Windows build runs in background (not required for formula)"
+	@echo "  4. GitHub Actions automatically:"
+	@echo "     - Updates Homebrew formula with correct SHA256"
+	@echo "     - Builds Windows binary"
+	@echo "     - Creates GitHub release"
 
 release-patch:
 	@$(MAKE) release BUMP=patch
@@ -65,39 +63,15 @@ release:
 	git push origin $$NEW_VERSION; \
 	echo ""; \
 	\
-	echo "⏳ Waiting 5 seconds for GitHub to create tarball..."; \
-	sleep 5; \
+	echo "🎉 Tag $$NEW_VERSION pushed!"; \
 	echo ""; \
-	\
-	echo "📥 Downloading release tarball..."; \
-	curl -sL "https://github.com/hnrqer/transcriber-pro/archive/refs/tags/$$NEW_VERSION.tar.gz" -o /tmp/transcriber-pro-$$NEW_VERSION.tar.gz; \
+	echo "⏳ GitHub Actions will now:"; \
+	echo "   1. Update Homebrew formula automatically"; \
+	echo "   2. Build Windows binary"; \
+	echo "   3. Create GitHub release"; \
 	echo ""; \
-	\
-	echo "🔐 Calculating SHA256..."; \
-	SHA256=$$(shasum -a 256 /tmp/transcriber-pro-$$NEW_VERSION.tar.gz | cut -d' ' -f1); \
-	echo "   SHA256: $$SHA256"; \
+	echo "📦 Check progress:"; \
+	echo "   https://github.com/hnrqer/transcriber-pro/actions"; \
 	echo ""; \
-	\
-	echo "📝 Updating Homebrew formula..."; \
-	sed -i '' "s|archive/refs/tags/v.*\.tar\.gz|archive/refs/tags/$$NEW_VERSION.tar.gz|g" Formula/transcriber-pro.rb; \
-	sed -i '' "s|sha256 \".*\"|sha256 \"$$SHA256\"|g" Formula/transcriber-pro.rb; \
-	echo ""; \
-	\
-	echo "✅ Formula updated!"; \
-	echo ""; \
-	echo "📝 Committing formula update..."; \
-	git add Formula/transcriber-pro.rb; \
-	git commit -m "Update Homebrew formula to $$NEW_VERSION"; \
-	git push; \
-	echo ""; \
-	\
-	rm /tmp/transcriber-pro-$$NEW_VERSION.tar.gz; \
-	\
-	echo ""; \
-	echo "🎉 Release $$NEW_VERSION complete!"; \
-	echo ""; \
-	echo "📦 Users can now install with:"; \
-	echo "   brew upgrade transcriber-pro"; \
-	echo ""; \
-	echo "ℹ️  Note: Windows build is still running in background"; \
-	echo "   Check: https://github.com/hnrqer/transcriber-pro/actions"
+	echo "✅ Once complete, users can upgrade with:"; \
+	echo "   brew update && brew upgrade transcriber-pro"
