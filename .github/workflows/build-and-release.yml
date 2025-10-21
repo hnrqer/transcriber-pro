@@ -44,7 +44,7 @@ jobs:
           $env:CGO_LDFLAGS = "-L$pwd\whisper.cpp\build\bin\Release -lwhisper -L$pwd\whisper.cpp\build\bin\Release -lggml"
           $VERSION = "${{ github.ref_name }}" -replace '^v', ''
           cd server
-          go build -ldflags "-X main.Version=$VERSION" -o transcriber-pro.exe
+          go build -ldflags "-s -w -X main.Version=$VERSION" -o transcriber-pro.exe
 
       - name: Create Windows package
         run: |
