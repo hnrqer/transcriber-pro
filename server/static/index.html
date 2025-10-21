@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="High-accuracy audio transcription using Whisper large-v3. Privacy-first, offline transcription.">
+    <meta name="theme-color" content="#667eea">
+
+    <title>Transcriber Pro</title>
+
+    <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="assets/icons/icon-512.png">
+    <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🎤 Transcriber Pro</h1>
+            <p>High-Accuracy Audio Transcription • Privacy-First • Offline</p>
+        </header>
+
+        <!-- Connection Status -->
+        <div id="connectionStatus" class="connection-status disconnected">
+            <div class="status-indicator"></div>
+            <span class="status-text">Checking server connection...</span>
+        </div>
+
+        <!-- Main Card -->
+        <div class="main-card">
+            <!-- Server Instructions (shown when not connected) -->
+            <div id="serverInstructions" class="companion-instructions" style="display: none;">
+                <h2>⚠️ Connection Lost</h2>
+                <p>The server appears to have stopped. Please restart it:</p>
+                <ul style="text-align: left; max-width: 500px; margin: 0 auto;">
+                    <li><strong>macOS:</strong> Run <code>./start.sh</code></li>
+                    <li><strong>Windows:</strong> Double-click <code>start.bat</code></li>
+                </ul>
+                <button id="retryConnection" class="retry-btn">Reload Page</button>
+            </div>
+
+            <!-- Upload Section (shown when connected) -->
+            <div id="uploadSection" style="display: none;">
+                <div id="dropZone" class="drop-zone">
+                    <div class="drop-zone-content">
+                        <div class="upload-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                            </svg>
+                        </div>
+                        <h2>Drop audio or video file here</h2>
+                        <p>Or click to browse your files</p>
+                        <button class="browse-btn">Browse Files</button>
+                        <p class="supported-formats">Supports: MP3, WAV, M4A, MP4, WEBM, OGG, FLAC</p>
+                    </div>
+                    <input type="file" id="fileInput" accept="audio/*,video/*" hidden>
+                </div>
+
+                <!-- Language Selection -->
+                <div class="language-section">
+                    <label for="languageSelect">Language:</label>
+                    <select id="languageSelect" class="language-select">
+                        <option value="">Auto-detect</option>
+                        <option value="en">English</option>
+                        <option value="es">Spanish</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="it">Italian</option>
+                        <option value="pt">Portuguese</option>
+                        <option value="nl">Dutch</option>
+                        <option value="ru">Russian</option>
+                        <option value="zh">Chinese</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Processing Section -->
+            <div id="processingSection" class="processing-section" style="display: none;">
+                <h2>⚙️ Transcribing...</h2>
+                <div class="file-info">
+                    <p><strong>File:</strong> <span id="processingFileName"></span></p>
+                    <p><strong>Status:</strong> <span id="processingStatus">Processing...</span></p>
+                    <p id="etaText" style="display: none;"><strong>ETA:</strong> <span id="etaValue"></span></p>
+                </div>
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <p class="progress-text"><span id="progressPercent">0</span>%</p>
+            </div>
+
+            <!-- Results Section -->
+            <div id="resultsSection" class="results-section" style="display: none;">
+                <div class="results-header">
+                    <h2>✅ Transcription Complete</h2>
+                    <button id="newTranscription" class="new-transcription-btn">New Transcription</button>
+                </div>
+
+                <div class="results-info">
+                    <span><strong>Language:</strong> <span id="detectedLanguage"></span></span>
+                    <span><strong>Duration:</strong> <span id="audioDuration"></span></span>
+                    <span><strong>Words:</strong> <span id="wordCount"></span></span>
+                </div>
+
+                <div class="transcript-container">
+                    <div class="transcript-header">
+                        <h3>Transcript</h3>
+                        <div class="export-buttons">
+                            <button id="copyBtn" class="export-btn">📋 Copy</button>
+                            <button id="exportTxt" class="export-btn">📄 TXT</button>
+                            <button id="exportSrt" class="export-btn">📝 SRT</button>
+                            <button id="exportJson" class="export-btn">📊 JSON</button>
+                        </div>
+                    </div>
+                    <div id="transcriptText" class="transcript-text"></div>
+                </div>
+
+                <!-- Segments Timeline -->
+                <div class="segments-container">
+                    <h3>Timeline</h3>
+                    <div id="segmentsList" class="segments-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>🔒 All processing happens locally on your machine • Your audio never leaves your device</p>
+            <p>
+                <a href="https://github.com/hnrqer/transcriber-pro" target="_blank">View on GitHub</a>
+                <span id="version" style="margin-left: 10px; opacity: 0.7;"></span>
+            </p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

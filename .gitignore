@@ -1,0 +1,43 @@
+# Go
+server/transcriber-pro
+server/transcriber-pro.exe
+
+# whisper.cpp (cloned during build)
+whisper.cpp/
+
+# Whisper Models
+*.pt
+models/
+.cache/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files
+*.tmp
+temp/
+tmp/
+
+# Environment variables
+.env
+.env.local
+
+# Node (if using any build tools)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# OS
+Thumbs.db
+desktop.ini

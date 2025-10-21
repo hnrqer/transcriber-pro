@@ -1,0 +1,8 @@
+module github.com/hnrqer/transcriber-pro
+
+go 1.25.3
+
+require (
+	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20251020123948-23c19308d8a5 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+)

@@ -1,0 +1,156 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  WHISPER_CPP_VERSION: v1.8.2
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: server/go.sum
+
+      - name: Install dependencies
+        run: |
+          choco install ffmpeg -y
+
+      - name: Clone whisper.cpp
+        run: |
+          git clone --depth 1 --branch ${{ env.WHISPER_CPP_VERSION }} https://github.com/ggerganov/whisper.cpp.git
+
+      - name: Build whisper.cpp
+        run: |
+          cd whisper.cpp
+          cmake -B build -DBUILD_SHARED_LIBS=ON
+          cmake --build build --config Release --parallel
+
+      - name: Build Go server
+        run: |
+          $env:CGO_CFLAGS = "-I$pwd\whisper.cpp\include -I$pwd\whisper.cpp\ggml\include"
+          $env:CGO_LDFLAGS = "-L$pwd\whisper.cpp\build\bin\Release -lwhisper -L$pwd\whisper.cpp\build\bin\Release -lggml"
+          $VERSION = "${{ github.ref_name }}" -replace '^v', ''
+          cd server
+          go build -ldflags "-X main.Version=$VERSION" -o transcriber-pro.exe
+
+      - name: Create Windows package
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\transcriber-pro
+          Copy-Item server\transcriber-pro.exe dist\transcriber-pro\
+          Copy-Item -Recurse server\static dist\transcriber-pro\
+
+          # Copy DLL files from build/bin/Release
+          Copy-Item whisper.cpp\build\bin\Release\*.dll dist\transcriber-pro\ -ErrorAction SilentlyContinue
+
+          @"
+          @echo off
+          cd /d "%~dp0"
+          transcriber-pro.exe
+          pause
+          "@ | Out-File -FilePath dist\transcriber-pro\start.bat -Encoding ASCII
+
+          @"
+          # Transcriber Pro for Windows
+
+          ## First Run - Antivirus Warning
+
+          **Windows Defender or your antivirus may flag this as suspicious.**
+          This is a FALSE POSITIVE because:
+          - The executable is unsigned (signing costs $$)
+          - It uses AI/ML libraries (common false positive trigger)
+          - It's a new/unknown application
+
+          ## How to Run Anyway
+
+          If Windows blocks it:
+          1. Click "More info"
+          2. Click "Run anyway"
+
+          Or add an exclusion:
+          1. Open Windows Security
+          2. Virus & threat protection → Manage settings
+          3. Add exclusion → Folder
+          4. Select this transcriber-pro folder
+
+          ## What This Does
+
+          - Runs a local web server on http://localhost:8456
+          - Downloads Whisper AI model (~3GB, first run only)
+          - Transcribes your audio files LOCALLY (never leaves your PC)
+
+          ## Getting Started
+
+          1. Double-click `start.bat`
+          2. Browser opens automatically
+          3. Upload audio/video file
+          4. Wait for transcription
+
+          ## Source Code
+
+          Open source at: https://github.com/hnrqer/transcriber-pro
+          "@ | Out-File -FilePath dist\transcriber-pro\README.txt -Encoding UTF8
+
+          Compress-Archive -Path dist\transcriber-pro\* -DestinationPath dist\transcriber-pro-windows.zip -Force
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcriber-pro-windows
+          path: dist/transcriber-pro-windows.zip
+
+  create-release:
+    needs: [build-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            transcriber-pro-windows/transcriber-pro-windows.zip
+          body: |
+            ## Transcriber Pro
+
+            Privacy-first audio transcription using Whisper Large-v3.
+
+            ### macOS
+
+            ```bash
+            brew tap hnrqer/transcriber-pro https://github.com/hnrqer/transcriber-pro
+            brew install transcriber-pro
+            transcriber-pro
+            ```
+
+            ### Windows
+
+            1. Extract transcriber-pro-windows.zip
+            2. Double-click start.bat
+            3. Browser opens automatically
+
+            ### System Requirements
+
+            - macOS 11+ or Windows 10+
+            - 8GB RAM (16GB recommended)
+            - 5GB disk space for model
+            - GPU recommended (10x faster)
+
+            ### First Run
+
+            Model downloads automatically (~3GB, one-time).
