@@ -44,13 +44,32 @@ jobs:
           $env:CGO_LDFLAGS = "-L$pwd\whisper.cpp\build\bin\Release -lwhisper -L$pwd\whisper.cpp\build\bin\Release -lggml"
           $VERSION = "${{ github.ref_name }}" -replace '^v', ''
           cd server
-          go build -ldflags "-s -w -X main.Version=$VERSION" -o transcriber-pro.exe
+          # Build with flags to reduce AV false positives:
+          # -s -w: strip debug symbols (smaller, less suspicious)
+          # -H windowsgui: GUI subsystem (less likely to trigger AV)
+          # -buildmode=exe: standard executable mode
+          go build -buildmode=exe -ldflags "-s -w -H windowsgui -X main.Version=$VERSION" -o transcriber-pro.exe
+
+      - name: Generate SBOM (Software Bill of Materials)
+        run: |
+          cd server
+          go version > ..\sbom.txt
+          go list -m all >> ..\sbom.txt
+          echo "`nWhisper.cpp: ${{ env.WHISPER_CPP_VERSION }}" >> ..\sbom.txt
+
+      - name: Generate checksums
+        run: |
+          cd server
+          $hash = (Get-FileHash -Algorithm SHA256 transcriber-pro.exe).Hash
+          "$hash  transcriber-pro.exe" | Out-File -FilePath ..\SHA256SUMS.txt -Encoding ASCII
 
       - name: Create Windows package
         run: |
           New-Item -ItemType Directory -Force -Path dist\transcriber-pro
           Copy-Item server\transcriber-pro.exe dist\transcriber-pro\
           Copy-Item -Recurse server\static dist\transcriber-pro\
+          Copy-Item sbom.txt dist\transcriber-pro\
+          Copy-Item SHA256SUMS.txt dist\transcriber-pro\
 
           # Copy DLL files from build/bin/Release
           Copy-Item whisper.cpp\build\bin\Release\*.dll dist\transcriber-pro\ -ErrorAction SilentlyContinue
@@ -65,38 +84,58 @@ jobs:
           @"
           # Transcriber Pro for Windows
 
-          ## First Run - Antivirus Warning
+          ## ⚠️ Antivirus False Positive Warning
 
-          **Windows Defender or your antivirus may flag this as suspicious.**
-          This is a FALSE POSITIVE because:
-          - The executable is unsigned (signing costs $$)
-          - It uses AI/ML libraries (common false positive trigger)
-          - It's a new/unknown application
+          **Windows Defender or your antivirus WILL likely flag this as suspicious.**
 
-          ## How to Run Anyway
+          ### Why This Happens (It's Safe!)
 
-          If Windows blocks it:
+          This is a **FALSE POSITIVE** caused by:
+          - ❌ **Unsigned binary** - Code signing costs \`$`300-500/year (hobby project)
+          - 🤖 **AI/ML libraries** - whisper.cpp uses native code patterns that trigger heuristics
+          - 📦 **CGO compilation** - Go + C code creates patterns similar to malware packers
+          - 🆕 **Low reputation score** - New releases haven't been downloaded enough yet
+
+          ### Verify Safety
+
+          1. **Check SHA256 hash** - See `SHA256SUMS.txt` in this folder
+          2. **Review source code** - https://github.com/hnrqer/transcriber-pro
+          3. **Check dependencies** - See `sbom.txt` (Software Bill of Materials)
+          4. **Scan on VirusTotal** - Upload the .exe and check multiple engines
+
+          ### How to Run Anyway
+
+          **Option 1: Windows SmartScreen**
           1. Click "More info"
           2. Click "Run anyway"
 
-          Or add an exclusion:
+          **Option 2: Add Exclusion (Recommended)**
           1. Open Windows Security
           2. Virus & threat protection → Manage settings
           3. Add exclusion → Folder
-          4. Select this transcriber-pro folder
+          4. Select this `transcriber-pro` folder
 
-          ## What This Does
+          ### What This Does
 
-          - Runs a local web server on http://localhost:8456
-          - Downloads Whisper AI model (~3GB, first run only)
-          - Transcribes your audio files LOCALLY (never leaves your PC)
+          - ✅ Runs a **local web server** on http://localhost:8456
+          - ✅ Downloads Whisper AI model (~3GB, **first run only**)
+          - ✅ Transcribes audio files **100% LOCALLY** (never leaves your PC)
+          - ✅ **No telemetry, no tracking, no internet required** (after model download)
+
+          ### Privacy Guarantee
+
+          - All processing happens on YOUR computer
+          - Your audio NEVER leaves your device
+          - No analytics or data collection
+          - Open source - verify the code yourself!
 
           ## Getting Started
 
           1. Double-click `start.bat`
-          2. Browser opens automatically
+          2. Browser opens automatically to http://localhost:8456
           3. Upload audio/video file
           4. Wait for transcription
+          5. Results saved to `~/.transcriber-pro/` automatically
 
           ## Source Code
 
