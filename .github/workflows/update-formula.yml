@@ -1,0 +1,47 @@
+name: Update Homebrew Formula
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate SHA256 and update formula
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          TAG="${GITHUB_REF#refs/tags/}"
+
+          # Download tarball and calculate SHA256
+          curl -sL "https://github.com/hnrqer/transcriber-pro/archive/refs/tags/${TAG}.tar.gz" -o release.tar.gz
+          SHA256=$(sha256sum release.tar.gz | awk '{print $1}')
+
+          echo "Version: $VERSION"
+          echo "Tag: $TAG"
+          echo "SHA256: $SHA256"
+
+          # Update formula file
+          sed -i "s|url \"https://github.com/hnrqer/transcriber-pro/archive/refs/tags/v.*\.tar\.gz\"|url \"https://github.com/hnrqer/transcriber-pro/archive/refs/tags/${TAG}.tar.gz\"|" Formula/transcriber-pro.rb
+          sed -i "s|sha256 \".*\"|sha256 \"$SHA256\"|" Formula/transcriber-pro.rb
+
+          # Increment revision or remove it for new versions
+          if grep -q "revision" Formula/transcriber-pro.rb; then
+            sed -i "/revision/d" Formula/transcriber-pro.rb
+          fi
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/transcriber-pro.rb
+          git commit -m "Update Homebrew formula to ${GITHUB_REF#refs/tags/}" || exit 0
+          git push origin HEAD:main
