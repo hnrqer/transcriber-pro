@@ -28,7 +28,7 @@ whisper-cpp:
 	fi
 
 build: whisper-cpp
-	@echo "Building transcriber-pro..."
+	@echo "Building transcriber-pro server..."
 	$(eval VERSION ?= dev)
 	$(eval ABS_WHISPER_DIR := $(shell cd $(WHISPER_CPP_DIR) && pwd))
 	$(eval ABS_BUILD_DIR := $(ABS_WHISPER_DIR)/build)
@@ -43,7 +43,19 @@ build: whisper-cpp
 	             -Wl,-rpath,$(ABS_BUILD_DIR)/ggml/src/ggml-blas \
 	             -framework Accelerate -framework Metal -framework Foundation" \
 	go build -ldflags "-X main.Version=$(VERSION)" -o transcriber-pro
+	@echo "Building transcriber-worker..."
+	CGO_CFLAGS="-I$(ABS_WHISPER_DIR)/include -I$(ABS_WHISPER_DIR)/ggml/include" \
+	CGO_LDFLAGS="-L$(ABS_BUILD_DIR)/src -lwhisper \
+	             -L$(ABS_BUILD_DIR)/ggml/src -lggml \
+	             -L$(ABS_BUILD_DIR)/ggml/src/ggml-metal -lggml-metal \
+	             -L$(ABS_BUILD_DIR)/ggml/src/ggml-blas -lggml-blas \
+	             -Wl,-rpath,$(ABS_BUILD_DIR)/src \
+	             -Wl,-rpath,$(ABS_BUILD_DIR)/ggml/src \
+	             -Wl,-rpath,$(ABS_BUILD_DIR)/ggml/src/ggml-metal \
+	             -Wl,-rpath,$(ABS_BUILD_DIR)/ggml/src/ggml-blas \
+	             -framework Accelerate -framework Metal -framework Foundation" \
+	go build -o transcriber-worker ./worker
 
 clean:
-	rm -f transcriber-pro
+	rm -f transcriber-pro transcriber-worker
 	rm -rf $(WHISPER_CPP_DIR)

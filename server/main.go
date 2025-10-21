@@ -53,6 +53,11 @@ func main() {
 	absStaticDir := staticDir
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Disable caching for static files to avoid stale content
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+
 		if r.URL.Path == "/" {
 			http.ServeFile(w, r, filepath.Join(absStaticDir, "index.html"))
 		} else {
@@ -64,6 +69,11 @@ func main() {
 	http.HandleFunc("/version", handleVersion)
 	http.HandleFunc("/transcribe", handleTranscribe)
 	http.HandleFunc("/progress/", handleProgress)
+	http.HandleFunc("/queue", handleQueue)
+	http.HandleFunc("/clear-completed", handleClearCompleted)
+	http.HandleFunc("/clear-all", handleClearAll)
+	http.HandleFunc("/cancel-job/", handleCancelJob)
+	http.HandleFunc("/kill-job/", handleKillJob)
 
 	serverURL := fmt.Sprintf("http://localhost:%s", port)
 
@@ -172,17 +182,13 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	engine.CreateJob(jobID)
-
-	go func() {
-		defer os.Remove(audioPath)
-		engine.Transcribe(context.Background(), jobID, audioPath, language, fileName)
-	}()
+	// Create job and add to queue - queue processor will handle transcription
+	engine.CreateJob(jobID, fileName, audioPath, language)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"job_id": jobID,
-		"status": string(StatusProcessing),
+		"status": string(StatusQueued),
 	})
 }
 
@@ -255,4 +261,102 @@ func openBrowser(url string) {
 	if err := cmd.Start(); err != nil {
 		log.Printf("Failed to open browser: %v", err)
 	}
+}
+
+func handleQueue(w http.ResponseWriter, r *http.Request) {
+	queuedJobs, completedJobs := engine.GetQueue()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"queue":     queuedJobs,
+		"completed": completedJobs,
+		"count":     len(queuedJobs),
+	})
+}
+
+func handleClearCompleted(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		sendJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	engine.ClearCompletedJobs()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "cleared",
+	})
+}
+
+func handleClearAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		sendJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	engine.ClearAllJobs()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "cleared",
+	})
+}
+
+func handleCancelJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		sendJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract job ID from URL path: /cancel-job/{jobID}
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 3 {
+		sendJSONError(w, "Job ID required", http.StatusBadRequest)
+		return
+	}
+	jobID := parts[2]
+
+	err := engine.CancelJob(jobID)
+	if err != nil {
+		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "cancelled",
+		"jobId":  jobID,
+	})
+}
+
+func handleKillJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		sendJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract job ID from URL path: /kill-job/{jobID}
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 3 {
+		sendJSONError(w, "Job ID required", http.StatusBadRequest)
+		return
+	}
+	jobID := parts[2]
+
+	log.Printf("[Server] Force killing job %s - terminating worker process", jobID)
+
+	// Kill the worker process (not the server!)
+	if err := engine.KillJob(jobID); err != nil {
+		log.Printf("[Server] Failed to kill job %s: %v", jobID, err)
+		sendJSONError(w, fmt.Sprintf("Failed to kill job: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "killed",
+		"jobId":  jobID,
+	})
+
+	log.Printf("[Server] Job %s killed successfully, queue will continue", jobID)
 }

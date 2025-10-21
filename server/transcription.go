@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 type JobStatus string
 
 const (
+	StatusQueued      JobStatus = "queued"
 	StatusProcessing  JobStatus = "processing"
 	StatusTranscribing JobStatus = "transcribing"
 	StatusCompleted   JobStatus = "completed"
@@ -28,13 +30,17 @@ const (
 )
 
 type Job struct {
-	ID       string
-	Status   JobStatus
-	Progress float64
-	Message  string
-	ETA      string // Estimated time remaining
-	Result   *TranscriptionResult
-	Error    string
+	ID           string
+	Status       JobStatus
+	Progress     float64
+	Message      string
+	ETA          string // Estimated time remaining
+	Result       *TranscriptionResult
+	Error        string
+	FileName     string // Original filename for display
+	QueuePosition int    // Position in queue (0 if not queued)
+	AudioPath    string // Path to audio file
+	Language     string // Language for transcription
 }
 
 type TranscriptionResult struct {
@@ -50,10 +56,18 @@ type TranscriptionSegment struct {
 }
 
 type TranscriptionEngine struct {
-	model     whisper.Model
-	jobs      map[string]*Job
-	jobsMutex sync.RWMutex
-	modelPath string
+	model            whisper.Model
+	jobs             map[string]*Job
+	jobsMutex        sync.RWMutex
+	modelPath        string
+	queue            []string           // Queue of job IDs waiting to be processed
+	queueMutex       sync.Mutex
+	isProcessing     bool               // Whether a job is currently being processed
+	processingCond   *sync.Cond         // Condition variable for queue processing
+	cancelledJobs    map[string]bool    // Track cancelled jobs
+	cancelledJobsMux sync.RWMutex       // Mutex for cancelledJobs map
+	workerCmd        *exec.Cmd          // Currently running worker process
+	workerMutex      sync.Mutex         // Mutex for worker command
 }
 
 func NewTranscriptionEngine() (*TranscriptionEngine, error) {
@@ -98,11 +112,19 @@ func NewTranscriptionEngine() (*TranscriptionEngine, error) {
 		return nil, fmt.Errorf("failed to load model: %w (corrupted file removed, please restart to re-download)", err)
 	}
 
-	return &TranscriptionEngine{
-		model:     model,
-		jobs:      make(map[string]*Job),
-		modelPath: modelPath,
-	}, nil
+	engine := &TranscriptionEngine{
+		model:         model,
+		jobs:          make(map[string]*Job),
+		modelPath:     modelPath,
+		queue:         make([]string, 0),
+		cancelledJobs: make(map[string]bool),
+	}
+	engine.processingCond = sync.NewCond(&engine.queueMutex)
+
+	// Start queue processor
+	go engine.processQueue()
+
+	return engine, nil
 }
 
 func downloadModel(modelPath string) error {
@@ -115,16 +137,32 @@ func downloadModel(modelPath string) error {
 	return cmd.Run()
 }
 
-func (e *TranscriptionEngine) CreateJob(jobID string) {
+func (e *TranscriptionEngine) CreateJob(jobID, fileName, audioPath, language string) {
 	e.jobsMutex.Lock()
-	defer e.jobsMutex.Unlock()
-
 	e.jobs[jobID] = &Job{
-		ID:       jobID,
-		Status:   StatusProcessing,
-		Progress: 0,
-		Message:  "Starting transcription...",
+		ID:        jobID,
+		Status:    StatusQueued,
+		Progress:  0,
+		Message:   "Waiting in queue...",
+		FileName:  fileName,
+		AudioPath: audioPath,
+		Language:  language,
 	}
+	e.jobsMutex.Unlock()
+
+	// Add to queue
+	e.queueMutex.Lock()
+	e.queue = append(e.queue, jobID)
+	queuePos := len(e.queue)
+	e.queueMutex.Unlock()
+
+	// Update queue positions for all jobs
+	e.updateQueuePositions()
+
+	log.Printf("[Job %s] Added to queue at position %d", jobID, queuePos)
+
+	// Signal queue processor
+	e.processingCond.Signal()
 }
 
 func (e *TranscriptionEngine) GetJob(jobID string) *Job {
@@ -138,34 +176,138 @@ func (e *TranscriptionEngine) GetJob(jobID string) *Job {
 	return nil
 }
 
+func (e *TranscriptionEngine) GetQueue() ([]Job, []Job) {
+	e.queueMutex.Lock()
+	defer e.queueMutex.Unlock()
+
+	e.jobsMutex.RLock()
+	defer e.jobsMutex.RUnlock()
+
+	// Get jobs in queue (queued + processing)
+	queuedJobs := make([]Job, 0)
+	for _, jobID := range e.queue {
+		if job, ok := e.jobs[jobID]; ok {
+			jobCopy := *job
+			queuedJobs = append(queuedJobs, jobCopy)
+		}
+	}
+
+	// Get completed/failed jobs (not in queue anymore)
+	completedJobs := make([]Job, 0)
+	completedIDs := make([]string, 0)
+	for jobID, job := range e.jobs {
+		if job.Status == StatusCompleted || job.Status == StatusFailed {
+			// Check if it's not in the queue
+			inQueue := false
+			for _, queuedJobID := range e.queue {
+				if queuedJobID == job.ID {
+					inQueue = true
+					break
+				}
+			}
+			if !inQueue {
+				completedIDs = append(completedIDs, jobID)
+			}
+		}
+	}
+
+	// Sort IDs to ensure consistent ordering
+	sort.Strings(completedIDs)
+
+	// Build completed jobs array in sorted order
+	for _, jobID := range completedIDs {
+		if job, ok := e.jobs[jobID]; ok {
+			jobCopy := *job
+			completedJobs = append(completedJobs, jobCopy)
+		}
+	}
+
+	return queuedJobs, completedJobs
+}
+
+func (e *TranscriptionEngine) updateQueuePositions() {
+	e.queueMutex.Lock()
+	defer e.queueMutex.Unlock()
+
+	e.jobsMutex.Lock()
+	defer e.jobsMutex.Unlock()
+
+	for i, jobID := range e.queue {
+		if job, ok := e.jobs[jobID]; ok {
+			job.QueuePosition = i + 1
+			if i == 0 && e.isProcessing {
+				job.Message = "Processing..."
+			} else {
+				job.Message = fmt.Sprintf("Waiting in queue (position %d)", i+1)
+			}
+		}
+	}
+}
+
+func (e *TranscriptionEngine) processQueue() {
+	for {
+		e.queueMutex.Lock()
+
+		// Wait while queue is empty
+		for len(e.queue) == 0 {
+			e.processingCond.Wait()
+		}
+
+		// Get next job from queue
+		jobID := e.queue[0]
+		e.isProcessing = true
+		e.queueMutex.Unlock()
+
+		// Get job details
+		e.jobsMutex.RLock()
+		job := e.jobs[jobID]
+		audioPath := ""
+		language := ""
+		fileName := ""
+		wasCancelled := false
+		if job != nil {
+			audioPath = job.AudioPath
+			language = job.Language
+			fileName = job.FileName
+			wasCancelled = (job.Status == StatusFailed && job.Error == "Cancelled by user")
+		}
+		e.jobsMutex.RUnlock()
+
+		if job != nil && audioPath != "" && !wasCancelled {
+			log.Printf("[Queue] Processing job %s (%s)", jobID, fileName)
+
+			// Actually call Transcribe - this blocks until complete
+			e.Transcribe(context.Background(), jobID, audioPath, language, fileName)
+
+			// Clean up audio file
+			os.Remove(audioPath)
+		} else if wasCancelled {
+			log.Printf("[Queue] Skipping cancelled job %s (%s)", jobID, fileName)
+			// Clean up audio file
+			if audioPath != "" {
+				os.Remove(audioPath)
+			}
+		}
+
+		// Remove from queue
+		e.queueMutex.Lock()
+		if len(e.queue) > 0 {
+			e.queue = e.queue[1:]
+		}
+		e.isProcessing = false
+		e.queueMutex.Unlock()
+
+		e.updateQueuePositions()
+		log.Printf("[Queue] Job %s completed, %d jobs remaining", jobID, len(e.queue))
+	}
+}
+
 func (e *TranscriptionEngine) Transcribe(ctx context.Context, jobID, audioPath, language, originalFileName string) {
 	duration, err := getAudioDuration(audioPath)
 	if err != nil {
 		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Failed to get audio duration: %v", err))
 		return
 	}
-
-	audioData, err := loadAudioFile(audioPath)
-	if err != nil {
-		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Failed to load audio: %v", err))
-		return
-	}
-
-	context, err := e.model.NewContext()
-	if err != nil {
-		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Failed to create context: %v", err))
-		return
-	}
-
-	log.Printf("[Job %s] Setting language: %s", jobID, language)
-	if err := context.SetLanguage(language); err != nil {
-		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Failed to set language: %v", err))
-		return
-	}
-
-	// Configure context parameters for proper segment extraction
-	context.SetSplitOnWord(true)
-	context.SetTokenTimestamps(true)
 
 	var speedFactor float64
 	if runtime.GOARCH == "arm64" && runtime.GOOS == "darwin" {
@@ -180,37 +322,99 @@ func (e *TranscriptionEngine) Transcribe(ctx context.Context, jobID, audioPath, 
 	stopEstimator := make(chan struct{})
 	go e.estimateProgress(jobID, startTime, expectedTime, stopEstimator)
 
-	err = context.Process(audioData, nil, nil, nil)
+	// Prepare worker request
+	type WorkerRequest struct {
+		JobID     string `json:"jobID"`
+		AudioPath string `json:"audioPath"`
+		ModelPath string `json:"modelPath"`
+		Language  string `json:"language"`
+	}
 
-	close(stopEstimator)
+	req := WorkerRequest{
+		JobID:     jobID,
+		AudioPath: audioPath,
+		ModelPath: e.modelPath,
+		Language:  language,
+	}
 
+	reqJSON, err := json.Marshal(req)
 	if err != nil {
-		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Transcription failed: %v", err))
+		close(stopEstimator)
+		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Failed to create worker request: %v", err))
 		return
 	}
 
-	// Get the detected language (either what was set or what was auto-detected)
-	detectedLanguage := context.DetectedLanguage()
-	log.Printf("[Job %s] Input language: %s, Detected language: %s", jobID, language, detectedLanguage)
+	// Get the worker binary path - use absolute path of current executable
+	exePath, err := os.Executable()
+	if err != nil {
+		close(stopEstimator)
+		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Failed to get executable path: %v", err))
+		return
+	}
+	workerPath := filepath.Join(filepath.Dir(exePath), "transcriber-worker")
+	log.Printf("[Job %s] Starting worker: %s", jobID, workerPath)
 
-	result := &TranscriptionResult{
-		Text:     "",
-		Segments: []TranscriptionSegment{},
-		Language: detectedLanguage,
+	// Start worker process
+	cmd := exec.Command(workerPath, string(reqJSON))
+	cmd.Stderr = os.Stderr
+
+	// Store the command so we can kill it later
+	e.workerMutex.Lock()
+	e.workerCmd = cmd
+	e.workerMutex.Unlock()
+
+	// Run worker and capture output
+	output, err := cmd.Output()
+
+	// Clear the worker command
+	e.workerMutex.Lock()
+	e.workerCmd = nil
+	e.workerMutex.Unlock()
+
+	close(stopEstimator)
+
+	log.Printf("[Job %s] Worker finished, output length: %d bytes", jobID, len(output))
+	if len(output) > 0 && len(output) < 1000 {
+		log.Printf("[Job %s] Worker output: %s", jobID, string(output))
 	}
 
-	for {
-		segment, err := context.NextSegment()
-		if err != nil {
-			break
-		}
+	// Check if job was killed/cancelled
+	if e.IsCancelled(jobID) {
+		log.Printf("[Job %s] Job was cancelled", jobID)
+		e.updateJob(jobID, StatusFailed, 0, "", "", nil, "Cancelled by user")
+		return
+	}
 
-		result.Segments = append(result.Segments, TranscriptionSegment{
-			Start: float64(segment.Start.Milliseconds()) / 1000.0,
-			End:   float64(segment.End.Milliseconds()) / 1000.0,
-			Text:  segment.Text,
-		})
-		result.Text += segment.Text
+	if err != nil {
+		log.Printf("[Job %s] Worker error: %v", jobID, err)
+		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Worker failed: %v", err))
+		return
+	}
+
+	// Parse worker response
+	type WorkerResponse struct {
+		Success  bool                     `json:"success"`
+		Text     string                   `json:"text,omitempty"`
+		Segments []TranscriptionSegment   `json:"segments,omitempty"`
+		Error    string                   `json:"error,omitempty"`
+		Duration float64                  `json:"duration"`
+	}
+
+	var resp WorkerResponse
+	if err := json.Unmarshal(output, &resp); err != nil {
+		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Failed to parse worker response: %v", err))
+		return
+	}
+
+	if !resp.Success {
+		e.updateJob(jobID, StatusFailed, 0, "", "", nil, resp.Error)
+		return
+	}
+
+	result := &TranscriptionResult{
+		Text:     resp.Text,
+		Segments: resp.Segments,
+		Language: language,
 	}
 
 	e.updateJob(jobID, StatusCompleted, 100, "Completed", "", result, "")
@@ -230,6 +434,12 @@ func (e *TranscriptionEngine) estimateProgress(jobID string, startTime time.Time
 		case <-stop:
 			return
 		case <-ticker.C:
+			// Check if job was cancelled
+			if e.IsCancelled(jobID) {
+				log.Printf("[Job %s] Detected cancellation during progress estimation", jobID)
+				return
+			}
+
 			elapsed := time.Since(startTime).Seconds()
 			progress := (elapsed / expectedTime) * 100
 			if progress > 99 {
@@ -472,4 +682,151 @@ func formatSRTTime(seconds float64) string {
 	millis := int((seconds - float64(int(seconds))) * 1000)
 
 	return fmt.Sprintf("%02d:%02d:%02d,%03d", hours, minutes, secs, millis)
+}
+
+func (e *TranscriptionEngine) ClearCompletedJobs() {
+	e.jobsMutex.Lock()
+	defer e.jobsMutex.Unlock()
+
+	e.queueMutex.Lock()
+	defer e.queueMutex.Unlock()
+
+	// Remove all completed/failed jobs that are not in queue
+	for jobID, job := range e.jobs {
+		if job.Status == StatusCompleted || job.Status == StatusFailed {
+			// Check if it's not in the queue
+			inQueue := false
+			for _, queuedJobID := range e.queue {
+				if queuedJobID == jobID {
+					inQueue = true
+					break
+				}
+			}
+			if !inQueue {
+				delete(e.jobs, jobID)
+			}
+		}
+	}
+
+	log.Printf("[Queue] Cleared completed jobs")
+}
+
+// ClearAllJobs clears all jobs (both queued and completed), except the currently processing one
+func (e *TranscriptionEngine) ClearAllJobs() {
+	e.jobsMutex.Lock()
+	defer e.jobsMutex.Unlock()
+
+	e.queueMutex.Lock()
+	defer e.queueMutex.Unlock()
+
+	// Keep only the first job in queue if it's processing
+	var currentJobID string
+	if len(e.queue) > 0 && e.isProcessing {
+		currentJobID = e.queue[0]
+		// Clear the queue except for the first (processing) job
+		e.queue = e.queue[:1]
+	} else {
+		// No job is processing, clear entire queue
+		e.queue = nil
+	}
+
+	// Delete all jobs except the one currently processing
+	for jobID := range e.jobs {
+		if jobID != currentJobID {
+			delete(e.jobs, jobID)
+		}
+	}
+
+	e.updateQueuePositions()
+	log.Printf("[Queue] Cleared all jobs")
+}
+
+// CancelJob removes a job from the queue or aborts an active transcription
+func (e *TranscriptionEngine) CancelJob(jobID string) error {
+	// Mark job as cancelled first (no other locks needed)
+	e.cancelledJobsMux.Lock()
+	e.cancelledJobs[jobID] = true
+	e.cancelledJobsMux.Unlock()
+
+	// Find and remove from queue
+	e.queueMutex.Lock()
+	found := false
+	isFirstJob := false
+	isProcessingJob := false
+	newQueue := make([]string, 0)
+	for i, queuedJobID := range e.queue {
+		if queuedJobID == jobID {
+			found = true
+			isFirstJob = (i == 0)
+			isProcessingJob = isFirstJob && e.isProcessing
+			log.Printf("[Queue] Cancelling job %s (isProcessing: %v, isFirstJob: %v)", jobID, e.isProcessing, isFirstJob)
+			// Don't add to new queue
+			continue
+		}
+		newQueue = append(newQueue, queuedJobID)
+	}
+
+	if !found {
+		e.queueMutex.Unlock()
+		return fmt.Errorf("job not found in queue")
+	}
+
+	e.queue = newQueue
+	e.queueMutex.Unlock()
+
+	// Now update job status (separate lock, after releasing queueMutex)
+	e.jobsMutex.Lock()
+	if job, ok := e.jobs[jobID]; ok {
+		job.Status = StatusFailed
+		job.Error = "Cancelled by user"
+		if isProcessingJob {
+			job.Message = "Cancelling..."
+		} else {
+			job.Message = "Cancelled"
+		}
+	}
+	e.jobsMutex.Unlock()
+
+	// Update queue positions
+	e.updateQueuePositions()
+	return nil
+}
+
+// IsCancelled checks if a job has been cancelled
+func (e *TranscriptionEngine) IsCancelled(jobID string) bool {
+	e.cancelledJobsMux.RLock()
+	defer e.cancelledJobsMux.RUnlock()
+	return e.cancelledJobs[jobID]
+}
+
+// KillJob kills the currently running worker process
+func (e *TranscriptionEngine) KillJob(jobID string) error {
+	// Mark job as cancelled
+	e.cancelledJobsMux.Lock()
+	e.cancelledJobs[jobID] = true
+	e.cancelledJobsMux.Unlock()
+
+	// Kill the worker process if it's running
+	e.workerMutex.Lock()
+	cmd := e.workerCmd
+	e.workerMutex.Unlock()
+
+	if cmd != nil && cmd.Process != nil {
+		log.Printf("[Job %s] Killing worker process (PID: %d)", jobID, cmd.Process.Pid)
+		if err := cmd.Process.Kill(); err != nil {
+			return fmt.Errorf("failed to kill worker process: %w", err)
+		}
+		log.Printf("[Job %s] Worker process killed successfully", jobID)
+	}
+
+	// Mark job as failed
+	e.jobsMutex.Lock()
+	if job, ok := e.jobs[jobID]; ok {
+		job.Status = StatusFailed
+		job.Error = "Killed by user"
+		job.Message = "Killed"
+	}
+	e.jobsMutex.Unlock()
+
+	return nil
 }

@@ -94,6 +94,53 @@ body {
     box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
 }
 
+/* Two Column Layout */
+.app-layout {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    position: relative;
+}
+
+.left-column {
+    flex: 1;
+    min-width: 0; /* Prevent flex overflow */
+}
+
+.right-column {
+    width: 380px;
+    flex-shrink: 0;
+    max-height: calc(100vh - 300px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #f9fafb;
+    border-radius: 16px;
+    padding: 20px;
+}
+
+.right-column:empty {
+    background: transparent;
+    padding: 0;
+}
+
+.right-column::-webkit-scrollbar {
+    width: 8px;
+}
+
+.right-column::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.right-column::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 4px;
+}
+
+.right-column::-webkit-scrollbar-thumb:hover {
+    background: var(--primary-dark);
+}
+
 /* Companion Instructions */
 .companion-instructions {
     text-align: center;
@@ -139,6 +186,10 @@ body {
 .retry-btn:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+/* Upload Section */
+#uploadSection {
 }
 
 /* Drop Zone */
@@ -194,6 +245,101 @@ body {
 
 .browse-btn:hover {
     transform: translateY(-2px);
+}
+
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.98);
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 24px;
+    border-radius: 16px;
+    z-index: 10;
+}
+
+.loading-overlay p {
+    color: var(--primary);
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.5px;
+}
+
+.spinner {
+    width: 64px;
+    height: 64px;
+    border: 6px solid #e5e7eb;
+    border-top-color: var(--primary);
+    border-right-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s ease-in-out infinite;
+    box-shadow: 0 4px 20px rgba(102, 126, 234, 0.3);
+    position: relative;
+}
+
+.spinner::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 44px;
+    height: 44px;
+    border: 4px solid #f3f4f6;
+    border-bottom-color: #764ba2;
+    border-left-color: #764ba2;
+    border-radius: 50%;
+    animation: spin-reverse 0.8s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes spin-reverse {
+    0% {
+        transform: translate(-50%, -50%) rotate(0deg);
+    }
+    100% {
+        transform: translate(-50%, -50%) rotate(-360deg);
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+.clear-failed-btn {
+    background: #ef4444;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.clear-failed-btn:hover {
+    background: #dc2626;
+    transform: translateY(-1px);
 }
 
 .supported-formats {
@@ -415,4 +561,281 @@ body {
 
 .companion-instructions a:hover {
     color: var(--primary-dark);
+}
+
+/* Queue Section */
+.queue-section {
+    margin-bottom: 30px;
+}
+
+.queue-section h2 {
+    font-size: 1.5rem;
+    margin-bottom: 20px;
+    color: var(--text-dark);
+}
+
+.queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.queue-loading {
+    padding: 30px;
+    text-align: center;
+    color: var(--text-light);
+    font-size: 0.95rem;
+    background: white;
+    border-radius: 12px;
+    border: 2px dashed var(--border);
+}
+
+.queue-empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-light);
+}
+
+.queue-empty p {
+    margin: 0;
+    font-size: 0.95rem;
+}
+
+.queue-empty-hint {
+    font-size: 0.85rem;
+    margin-top: 8px !important;
+    opacity: 0.7;
+}
+
+.queue-item {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    border: 2px solid var(--border);
+    transition: all 0.3s ease;
+}
+
+.queue-item:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.queue-item-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.queue-position {
+    font-weight: 700;
+    color: var(--primary);
+    min-width: 32px;
+}
+
+.queue-filename {
+    flex: 1;
+    font-weight: 600;
+    color: var(--text-dark);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.queue-status-badge {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.badge-queued {
+    background: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+}
+
+.badge-processing {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+}
+
+.badge-completed {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(5, 150, 105, 0.15));
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    font-weight: 700;
+    box-shadow: 0 2px 4px rgba(16, 185, 129, 0.1);
+}
+
+.badge-failed {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+}
+
+.queue-message {
+    font-size: 0.9rem;
+    color: var(--text-light);
+    padding-left: 44px;
+}
+
+.queue-progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-left: 44px;
+}
+
+.progress-bar-small {
+    flex: 1;
+    height: 6px;
+    background: rgba(102, 126, 234, 0.1);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.progress-fill-small {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+    transition: width 0.3s ease;
+    border-radius: 10px;
+}
+
+.queue-progress-text {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--primary);
+    min-width: 45px;
+    text-align: right;
+}
+
+.queue-empty {
+    text-align: center;
+    color: var(--text-light);
+    padding: 40px;
+    font-size: 1.1rem;
+}
+
+.status-queued {
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.status-processing, .status-transcribing {
+    border-color: rgba(16, 185, 129, 0.3);
+    background: rgba(16, 185, 129, 0.02);
+}
+
+.status-completed {
+    border-color: var(--border);
+    background: white;
+}
+
+.status-failed {
+    border-color: rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.02);
+}
+
+/* Selected queue item */
+.queue-item.selected {
+    border-color: var(--primary);
+    background: rgba(102, 126, 234, 0.05);
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.queue-item.status-completed {
+    transition: all 0.2s ease;
+}
+
+.queue-item.status-completed:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+}
+
+.queue-error {
+    font-size: 0.85rem;
+    color: #ef4444;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(239, 68, 68, 0.05);
+    border-radius: 6px;
+    border-left: 3px solid #ef4444;
+}
+
+.queue-section h3 {
+    font-size: 1.1rem;
+    color: var(--text-light);
+    font-weight: 600;
+}
+
+/* Queue Section in Right Column */
+.right-column .queue-section {
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+
+.right-column .queue-section h2 {
+    font-size: 1.2rem;
+    margin-bottom: 16px;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    background: white;
+    padding: 12px 0;
+    z-index: 5;
+    border-bottom: 2px solid var(--border);
+}
+
+.queue-section h3 {
+    font-size: 1.1rem;
+    color: var(--text-light);
+    font-weight: 600;
+    margin-top: 24px;
+    margin-bottom: 12px;
+}
+
+/* Cancel button */
+.cancel-job-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-light);
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    line-height: 1;
+}
+
+.cancel-job-btn:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--error);
+    transform: scale(1.1);
+}
+
+/* Kill button */
+.kill-job-btn {
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    border: none;
+    color: white;
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    line-height: 1;
+    box-shadow: 0 2px 4px rgba(220, 38, 38, 0.3);
+}
+
+.kill-job-btn:hover {
+    background: linear-gradient(135deg, #b91c1c, #991b1b);
+    transform: scale(1.05);
+    box-shadow: 0 4px 8px rgba(220, 38, 38, 0.4);
+}
+
+/* Queue ETA */
+.queue-eta {
+    font-size: 0.85rem;
+    color: var(--text-light);
+    padding-left: 44px;
+    margin-top: 4px;
 }
