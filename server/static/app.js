@@ -385,31 +385,54 @@ class WhisperApp {
         if (!this.transcriptionResult) return;
 
         try {
-            const response = await fetch(`${this.serverUrl}/export/${format}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(this.transcriptionResult)
-            });
+            let content = '';
+            let mimeType = 'text/plain';
+            const filename = `transcript-${Date.now()}.${format}`;
 
-            if (!response.ok) {
-                throw new Error('Export failed');
+            if (format === 'txt') {
+                content = this.transcriptionResult.text;
+                mimeType = 'text/plain';
+            } else if (format === 'srt') {
+                content = this.generateSRT();
+                mimeType = 'text/plain';
+            } else if (format === 'json') {
+                content = JSON.stringify(this.transcriptionResult, null, 2);
+                mimeType = 'application/json';
             }
 
-            // Download file
-            const blob = await response.blob();
+            // Create and download file
+            const blob = new Blob([content], { type: mimeType });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `transcript.${format}`;
+            a.download = filename;
+            document.body.appendChild(a);
             a.click();
+            document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
         } catch (error) {
             console.error('Export failed:', error);
             alert(`Export failed: ${error.message}`);
         }
+    }
+
+    generateSRT() {
+        let srt = '';
+        this.transcriptionResult.segments.forEach((segment, index) => {
+            const start = this.formatSRTTime(segment.start);
+            const end = this.formatSRTTime(segment.end);
+            srt += `${index + 1}\n${start} --> ${end}\n${segment.text.trim()}\n\n`;
+        });
+        return srt;
+    }
+
+    formatSRTTime(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        const ms = Math.floor((seconds % 1) * 1000);
+        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
     }
 }
 
