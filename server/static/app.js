@@ -272,7 +272,7 @@ class WhisperApp {
 
                 // Check if completed
                 if (progress.status === 'completed') {
-                    if (progress.result && progress.result.success) {
+                    if (progress.result) {
                         this.transcriptionResult = progress.result;
                         this.showResults(progress.result);
                     } else {
