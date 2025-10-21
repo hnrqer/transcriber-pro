@@ -161,6 +161,10 @@ func (e *TranscriptionEngine) Transcribe(ctx context.Context, jobID, audioPath, 
 		return
 	}
 
+	// Configure context parameters for proper segment extraction
+	context.SetSplitOnWord(true)
+	context.SetTokenTimestamps(true)
+
 	var speedFactor float64
 	if runtime.GOARCH == "arm64" && runtime.GOOS == "darwin" {
 		speedFactor = 6.0
@@ -296,7 +300,7 @@ func loadAudioFile(audioPath string) ([]float32, error) {
 		"-i", audioPath,
 		"-ar", "16000",
 		"-ac", "1",
-		"-c:a", "pcm_f32le",
+		"-c:a", "pcm_s16le",
 		"-f", "wav",
 		"-y",
 		wavPath)
@@ -323,9 +327,16 @@ func loadAudioFile(audioPath string) ([]float32, error) {
 		return nil, err
 	}
 
-	samples := make([]float32, dataSize/4)
-	if err := binary.Read(file, binary.LittleEndian, &samples); err != nil {
+	// Read as 16-bit signed integers
+	int16Samples := make([]int16, dataSize/2)
+	if err := binary.Read(file, binary.LittleEndian, &int16Samples); err != nil {
 		return nil, err
+	}
+
+	// Convert int16 to float32 (normalized to -1.0 to 1.0)
+	samples := make([]float32, len(int16Samples))
+	for i, sample := range int16Samples {
+		samples[i] = float32(sample) / 32768.0
 	}
 
 	return samples, nil
