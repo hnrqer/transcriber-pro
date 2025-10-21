@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -137,7 +138,7 @@ func (e *TranscriptionEngine) GetJob(jobID string) *Job {
 	return nil
 }
 
-func (e *TranscriptionEngine) Transcribe(ctx context.Context, jobID, audioPath, language string) {
+func (e *TranscriptionEngine) Transcribe(ctx context.Context, jobID, audioPath, language, originalFileName string) {
 	duration, err := getAudioDuration(audioPath)
 	if err != nil {
 		e.updateJob(jobID, StatusFailed, 0, "", "", nil, fmt.Sprintf("Failed to get audio duration: %v", err))
@@ -213,6 +214,11 @@ func (e *TranscriptionEngine) Transcribe(ctx context.Context, jobID, audioPath, 
 	}
 
 	e.updateJob(jobID, StatusCompleted, 100, "Completed", "", result, "")
+
+	// Save transcription to disk
+	if err := saveTranscription(result, originalFileName); err != nil {
+		log.Printf("[Job %s] Warning: Failed to save transcription to disk: %v", jobID, err)
+	}
 }
 
 func (e *TranscriptionEngine) estimateProgress(jobID string, startTime time.Time, expectedTime float64, stop chan struct{}) {
@@ -351,4 +357,119 @@ func (e *TranscriptionEngine) Close() {
 	if e.model != nil {
 		e.model.Close()
 	}
+}
+
+// getOutputDir returns the platform-specific directory for saving transcriptions
+func getOutputDir() (string, error) {
+	var baseDir string
+
+	if runtime.GOOS == "darwin" {
+		// macOS: Use ~/.transcriber-pro
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		baseDir = filepath.Join(homeDir, ".transcriber-pro")
+	} else if runtime.GOOS == "windows" {
+		// Windows: Use executable directory/transcriptions
+		exePath, err := os.Executable()
+		if err != nil {
+			return "", err
+		}
+		baseDir = filepath.Join(filepath.Dir(exePath), "transcriptions")
+	} else {
+		// Linux/Other: Use ~/transcriber-pro
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		baseDir = filepath.Join(homeDir, "transcriber-pro")
+	}
+
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return "", err
+	}
+
+	return baseDir, nil
+}
+
+// saveTranscription saves the transcription result to disk in multiple formats
+func saveTranscription(result *TranscriptionResult, originalFileName string) error {
+	outputDir, err := getOutputDir()
+	if err != nil {
+		return fmt.Errorf("failed to get output directory: %w", err)
+	}
+
+	// Create timestamp prefix: YYYYMMDD_HHMMSS
+	timestamp := time.Now().Format("20060102_150405")
+
+	// Remove extension from original filename
+	baseFilename := strings.TrimSuffix(originalFileName, filepath.Ext(originalFileName))
+
+	// Create folder name: timestamp_filename
+	folderName := fmt.Sprintf("%s_%s", timestamp, baseFilename)
+	outputFolder := filepath.Join(outputDir, folderName)
+
+	// Create the output folder
+	if err := os.MkdirAll(outputFolder, 0755); err != nil {
+		return fmt.Errorf("failed to create output folder: %w", err)
+	}
+
+	// Save as TXT
+	txtPath := filepath.Join(outputFolder, "transcript.txt")
+	if err := os.WriteFile(txtPath, []byte(result.Text), 0644); err != nil {
+		return fmt.Errorf("failed to save TXT: %w", err)
+	}
+
+	// Save as JSON
+	jsonPath := filepath.Join(outputFolder, "transcript.json")
+	jsonData, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+	if err := os.WriteFile(jsonPath, jsonData, 0644); err != nil {
+		return fmt.Errorf("failed to save JSON: %w", err)
+	}
+
+	// Save as SRT
+	srtPath := filepath.Join(outputFolder, "transcript.srt")
+	srtContent := generateSRT(result.Segments)
+	if err := os.WriteFile(srtPath, []byte(srtContent), 0644); err != nil {
+		return fmt.Errorf("failed to save SRT: %w", err)
+	}
+
+	log.Printf("Transcription saved to: %s", outputFolder)
+	return nil
+}
+
+// generateSRT creates SRT subtitle format from segments
+func generateSRT(segments []TranscriptionSegment) string {
+	var srt strings.Builder
+
+	for i, segment := range segments {
+		// Segment number
+		srt.WriteString(fmt.Sprintf("%d\n", i+1))
+
+		// Timestamps
+		startTime := formatSRTTime(segment.Start)
+		endTime := formatSRTTime(segment.End)
+		srt.WriteString(fmt.Sprintf("%s --> %s\n", startTime, endTime))
+
+		// Text
+		srt.WriteString(segment.Text)
+		srt.WriteString("\n\n")
+	}
+
+	return srt.String()
+}
+
+// formatSRTTime formats seconds to SRT timestamp format (HH:MM:SS,mmm)
+func formatSRTTime(seconds float64) string {
+	hours := int(seconds / 3600)
+	minutes := int((seconds - float64(hours*3600)) / 60)
+	secs := int(seconds - float64(hours*3600) - float64(minutes*60))
+	millis := int((seconds - float64(int(seconds))) * 1000)
+
+	return fmt.Sprintf("%02d:%02d:%02d,%03d", hours, minutes, secs, millis)
 }

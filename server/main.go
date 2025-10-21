@@ -176,7 +176,7 @@ func handleTranscribe(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		defer os.Remove(audioPath)
-		engine.Transcribe(context.Background(), jobID, audioPath, language)
+		engine.Transcribe(context.Background(), jobID, audioPath, language, fileName)
 	}()
 
 	w.Header().Set("Content-Type", "application/json")
