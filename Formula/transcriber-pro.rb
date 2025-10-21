@@ -1,8 +1,8 @@
 class TranscriberPro < Formula
   desc "Privacy-first audio transcription using Whisper Large-v3"
   homepage "https://github.com/hnrqer/transcriber-pro"
-  url "https://github.com/hnrqer/transcriber-pro/archive/refs/tags/v2.1.4.tar.gz"
-  sha256 "d9e6b12e5c38685252508058102001abfe45cd5c27e0ff798170e69cb3f1ef81" # Will be updated after creating the tag
+  url "https://github.com/hnrqer/transcriber-pro/archive/refs/tags/v1.0.0.tar.gz"
+  sha256 "3f60b85dcd6df3384dade4dbc5eabdf6937579527db8ed8b39ce507d63320da1" # Will be updated after creating the tag
   license "MIT"
 
   depends_on "go" => :build
