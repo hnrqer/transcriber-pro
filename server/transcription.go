@@ -1,9 +1,7 @@
 package main
 
 import (
-	"sort"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -226,11 +225,12 @@ func (e *TranscriptionEngine) GetQueue() ([]Job, []Job) {
 }
 
 func (e *TranscriptionEngine) updateQueuePositions() {
-	e.queueMutex.Lock()
-	defer e.queueMutex.Unlock()
-
+	// Always acquire locks in consistent order: jobsMutex first, then queueMutex
 	e.jobsMutex.Lock()
 	defer e.jobsMutex.Unlock()
+
+	e.queueMutex.Lock()
+	defer e.queueMutex.Unlock()
 
 	for i, jobID := range e.queue {
 		if job, ok := e.jobs[jobID]; ok {
@@ -513,56 +513,6 @@ func getAudioDuration(audioPath string) (float64, error) {
 	return duration, nil
 }
 
-func loadAudioFile(audioPath string) ([]float32, error) {
-	wavPath := audioPath + ".wav"
-	defer os.Remove(wavPath)
-
-	cmd := exec.Command("ffmpeg",
-		"-i", audioPath,
-		"-ar", "16000",
-		"-ac", "1",
-		"-c:a", "pcm_s16le",
-		"-f", "wav",
-		"-y",
-		wavPath)
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("ffmpeg conversion failed: %w", err)
-	}
-
-	file, err := os.Open(wavPath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	stat, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-
-	headerSize := int64(44)
-	dataSize := stat.Size() - headerSize
-
-	if _, err := file.Seek(headerSize, 0); err != nil {
-		return nil, err
-	}
-
-	// Read as 16-bit signed integers
-	int16Samples := make([]int16, dataSize/2)
-	if err := binary.Read(file, binary.LittleEndian, &int16Samples); err != nil {
-		return nil, err
-	}
-
-	// Convert int16 to float32 (normalized to -1.0 to 1.0)
-	samples := make([]float32, len(int16Samples))
-	for i, sample := range int16Samples {
-		samples[i] = float32(sample) / 32768.0
-	}
-
-	return samples, nil
-}
-
 func (e *TranscriptionEngine) Close() {
 	if e.model != nil {
 		e.model.Close()
@@ -714,10 +664,7 @@ func (e *TranscriptionEngine) ClearCompletedJobs() {
 // ClearAllJobs clears all jobs (both queued and completed), except the currently processing one
 func (e *TranscriptionEngine) ClearAllJobs() {
 	e.jobsMutex.Lock()
-	defer e.jobsMutex.Unlock()
-
 	e.queueMutex.Lock()
-	defer e.queueMutex.Unlock()
 
 	// Keep only the first job in queue if it's processing
 	var currentJobID string
@@ -737,6 +684,10 @@ func (e *TranscriptionEngine) ClearAllJobs() {
 		}
 	}
 
+	e.queueMutex.Unlock()
+	e.jobsMutex.Unlock()
+
+	// Update positions after releasing locks to avoid deadlock
 	e.updateQueuePositions()
 	log.Printf("[Queue] Cleared all jobs")
 }

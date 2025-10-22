@@ -180,7 +180,3 @@ func loadAudioData(audioPath string) ([]float32, error) {
 
 	return samples, nil
 }
-
-func shellQuote(s string) string {
-	return "\"" + s + "\""
-}

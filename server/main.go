@@ -19,10 +19,17 @@ import (
 )
 
 const (
-	port          = "8456"
 	uploadDir     = "/tmp/transcriber-uploads"
 	maxUploadSize = 20 * 1024 * 1024 * 1024 // 20GB limit
 )
+
+func getPort() string {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8456" // Default port
+	}
+	return port
+}
 
 var Version = "dev"
 
@@ -75,12 +82,16 @@ func main() {
 	http.HandleFunc("/cancel-job/", handleCancelJob)
 	http.HandleFunc("/kill-job/", handleKillJob)
 
+	port := getPort()
 	serverURL := fmt.Sprintf("http://localhost:%s", port)
 
-	go func() {
-		time.Sleep(1500 * time.Millisecond)
-		openBrowser(serverURL)
-	}()
+	// Skip browser opening if NO_BROWSER env var is set (useful for testing)
+	if os.Getenv("NO_BROWSER") == "" {
+		go func() {
+			time.Sleep(1500 * time.Millisecond)
+			openBrowser(serverURL)
+		}()
+	}
 
 	fmt.Println("========================================")
 	fmt.Println("Transcriber Pro - Companion")

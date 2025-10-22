@@ -1,6 +1,6 @@
 # Transcriber Pro
 
-Privacy-first audio transcription using Whisper Large-v3.
+Privacy-first audio transcription using Whisper Large-v3. All processing happens locally on your machine with a modern web UI.
 
 ## Quick Start
 
@@ -20,11 +20,16 @@ transcriber-pro
 
 ## Features
 
-- 100% local processing (audio never leaves your machine)
-- Whisper large-v3 (98% accuracy)
-- No installation required
-- No admin privileges needed
-- GPU acceleration (Apple Silicon, NVIDIA CUDA)
+- **100% Local Processing** - Audio never leaves your machine
+- **High Accuracy** - Whisper large-v3 model (98% accuracy)
+- **Queue Management** - Upload multiple files, process serially
+- **Real-time Progress** - Live updates via WebSocket
+- **Killable Jobs** - Cancel or kill running transcriptions instantly
+- **Multiple Export Formats** - TXT, SRT, JSON
+- **GPU Acceleration** - Optimized for Apple Silicon, NVIDIA CUDA
+- **Modern Web UI** - Drag-and-drop, two-column layout with scrollable queue
+- **No Installation Required** - Single binary, no dependencies
+- **No Admin Privileges Needed** - Runs in user space
 
 ## System Requirements
 
@@ -66,15 +71,28 @@ go build -o transcriber-pro.exe
 transcriber-pro.exe
 ```
 
+## Architecture
+
+Transcriber Pro uses a **worker process architecture** for robust job control:
+
+- **Main Server** (`transcriber-pro`) - HTTP server, WebSocket handler, queue management
+- **Worker Process** (`transcriber-worker`) - Spawned per job, handles actual transcription
+- **Benefits**: Kill transcription jobs without affecting server, better resource isolation
+
 ## Project Structure
 
 ```
 transcriber-pro/
 ├── server/           # Go backend
-│   ├── main.go      # HTTP server & API
-│   ├── transcription.go  # Whisper integration
+│   ├── main.go      # HTTP server, WebSocket handler, API endpoints
+│   ├── transcription.go  # Queue management, job orchestration
+│   ├── worker/      # Worker process for transcription
+│   │   └── main.go  # Whisper.cpp integration
 │   ├── static/      # Web UI
-│   └── Makefile     # Build automation
+│   │   ├── index.html   # HTML structure
+│   │   ├── app.js       # WebSocket client, queue rendering
+│   │   └── style.css    # Two-column layout, styling
+│   └── Makefile     # Build automation (whisper.cpp + Go binaries)
 └── .github/         # CI/CD workflows
 ```
 
@@ -82,11 +100,12 @@ transcriber-pro/
 
 ### POST /transcribe
 
-Upload audio file for transcription.
+Upload audio file(s) for transcription. Supports multiple files in a single request.
 
 ```bash
 curl -X POST http://localhost:8456/transcribe \
-  -F "audio=@file.mp3" \
+  -F "audio=@file1.mp3" \
+  -F "audio=@file2.mp3" \
   -F "language=en"
 ```
 
@@ -94,24 +113,113 @@ Response:
 
 ```json
 {
-  "job_id": "uuid",
-  "status": "processing"
+  "job_ids": ["uuid1", "uuid2"],
+  "message": "2 jobs queued"
 }
 ```
 
-### GET /progress/:job_id
+### GET /queue
 
-Poll transcription progress.
+Get current queue state including active, queued, completed, and failed jobs.
 
 Response:
 
 ```json
 {
-  "status": "transcribing",
-  "progress": 45.2,
-  "message": "Transcribing... 45%"
+  "queue": [
+    {
+      "ID": "uuid",
+      "FileName": "audio.mp3",
+      "Status": "processing",
+      "Progress": 45.2,
+      "QueuePosition": 0
+    }
+  ],
+  "completed": [
+    {
+      "ID": "uuid2",
+      "FileName": "done.mp3",
+      "Status": "completed",
+      "Text": "Transcription text...",
+      "Language": "en",
+      "Duration": 120.5
+    }
+  ]
 }
 ```
+
+### POST /kill-job/:job_id
+
+Kill a running transcription job by terminating the worker process.
+
+Response:
+
+```json
+{
+  "message": "Job killed successfully"
+}
+```
+
+### POST /cancel-job/:job_id
+
+Cancel a queued job (not yet processing).
+
+Response:
+
+```json
+{
+  "message": "Job cancelled successfully"
+}
+```
+
+### POST /clear-completed
+
+Remove all completed and failed jobs from the queue.
+
+Response:
+
+```json
+{
+  "message": "Completed jobs cleared"
+}
+```
+
+### POST /clear-all
+
+Clear all jobs (queued, completed, and failed). Does not affect currently processing jobs.
+
+Response:
+
+```json
+{
+  "message": "All jobs cleared"
+}
+```
+
+### GET /queue (Polling)
+
+The UI polls this endpoint every 500ms for real-time updates on queue changes, job progress, and completion events.
+
+## Testing
+
+End-to-end tests using Playwright:
+
+```bash
+cd tests
+npm install
+npx playwright install
+npm test
+```
+
+Tests cover:
+- Homepage loading and UI elements
+- Connection status
+- Queue management
+- API endpoints (/health, /version, /queue, /clear-all, etc.)
+- File upload validation
+- Drag and drop interactions
+
+See [tests/README.md](tests/README.md) for more details.
 
 ## License
 

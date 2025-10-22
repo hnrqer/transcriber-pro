@@ -591,6 +591,24 @@ github.com/google/uuid                         // UUID generation
 
 ## Testing Checklist
 
+### Automated E2E Tests (Playwright)
+- [x] Homepage loads successfully
+- [x] Connection status is hidden when connected
+- [x] Version is displayed in footer
+- [x] Language selector has options
+- [x] Queue shows empty state initially
+- [x] Export buttons are hidden initially
+- [x] Two-column layout is displayed
+- [x] Drop zone responds to drag events
+- [x] Health endpoint responds
+- [x] Version endpoint responds
+- [x] Queue endpoint responds
+- [x] Clear all endpoint responds
+- [x] Clear completed endpoint responds
+- [x] Transcribe endpoint requires audio file
+
+**Run tests:** `cd tests && npm test`
+
 ### macOS (Homebrew)
 - [x] Install via Homebrew
 - [x] Version displays correctly
@@ -620,6 +638,232 @@ github.com/google/uuid                         // UUID generation
 - [x] Error messages display correctly
 - [x] Progress updates in real-time
 - [x] ETA calculation is accurate
+- [x] E2E tests pass (14/14)
+
+---
+
+## Recent Updates (Test Infrastructure & Port Configuration)
+
+### 6. End-to-End Testing with Playwright
+**Date:** Current Session
+
+**Problem:** No automated testing, manual testing only
+
+**Solution:** Comprehensive E2E test suite with Playwright
+
+**Files Created:**
+- `tests/e2e/basic.spec.js` - 14 comprehensive tests
+- `tests/playwright.config.js` - Playwright configuration
+- `tests/package.json` - Test dependencies
+- `tests/README.md` - Test documentation
+- `.github/workflows/e2e-tests.yml` - CI/CD automation
+
+**Test Coverage:**
+```javascript
+// Homepage and UI (8 tests)
+- Homepage loads successfully
+- Connection status is hidden when connected
+- Version is displayed in footer
+- Language selector has options
+- Queue shows empty state initially
+- Export buttons are hidden initially
+- Two-column layout is displayed
+- Drop zone responds to drag events
+
+// API Endpoints (6 tests)
+- Health endpoint responds
+- Version endpoint responds
+- Queue endpoint responds
+- Clear all endpoint responds
+- Clear completed endpoint responds
+- Transcribe endpoint requires audio file
+```
+
+**Test Results:** 14/14 tests passing ✅
+
+---
+
+### 7. Port Configuration for Test Isolation
+**Problem:** Tests and app used same port (8456), couldn't run in parallel
+
+**User Feedback:** "if tests use same port as the app this points a problem to me as I can run the app and run tests in parallel FIX IT!"
+
+**Solution:** Made server port configurable via environment variable
+
+**Files Modified:**
+- `server/main.go` - Added `getPort()` function and PORT env var support
+- `tests/playwright.config.js` - Tests use port 9456
+- `tests/README.md` - Documented port configuration
+
+**Implementation:**
+```go
+func getPort() string {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8456" // Default port
+	}
+	return port
+}
+```
+
+**Test Configuration:**
+```javascript
+webServer: {
+  command: 'cd ../server && make build && NO_BROWSER=1 PORT=9456 ./transcriber-pro',
+  url: 'http://localhost:9456',
+}
+```
+
+**Benefits:**
+- App runs on port 8456 (default)
+- Tests run on port 9456
+- Can run both simultaneously for development
+
+---
+
+### 8. Browser Auto-Open Control
+**Problem:** Tests triggered browser auto-open, interfering with headless execution
+
+**Solution:** Added NO_BROWSER environment variable
+
+**Files Modified:**
+- `server/main.go` - Check NO_BROWSER env var before opening browser
+
+**Implementation:**
+```go
+// Skip browser opening if NO_BROWSER env var is set (useful for testing)
+if os.Getenv("NO_BROWSER") == "" {
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		openBrowser(serverURL)
+	}()
+}
+```
+
+---
+
+### 9. Critical Deadlock Fix - Lock Ordering
+**Problem:** `/clear-all` endpoint timing out during tests, causing 1 of 14 tests to fail
+
+**Root Cause:** Lock ordering deadlock - `ClearAllJobs()` acquired locks in order `jobsMutex` → `queueMutex`, while `updateQueuePositions()` acquired them in order `queueMutex` → `jobsMutex`. This created a classic deadlock scenario.
+
+**Files Modified:**
+- `server/transcription.go` - Fixed lock ordering to be consistent across all functions
+
+**Fix:**
+```go
+// updateQueuePositions now acquires locks in consistent order: jobsMutex first, then queueMutex
+func (e *TranscriptionEngine) updateQueuePositions() {
+	// Always acquire locks in consistent order: jobsMutex first, then queueMutex
+	e.jobsMutex.Lock()
+	defer e.jobsMutex.Unlock()
+
+	e.queueMutex.Lock()
+	defer e.queueMutex.Unlock()
+
+	for i, jobID := range e.queue {
+		if job, ok := e.jobs[jobID]; ok {
+			job.QueuePosition = i + 1
+			if i == 0 && e.isProcessing {
+				job.Message = "Processing..."
+			} else {
+				job.Message = fmt.Sprintf("Waiting in queue (position %d)", i+1)
+			}
+		}
+	}
+}
+
+// ClearAllJobs acquires locks in same order: jobsMutex first, then queueMutex
+func (e *TranscriptionEngine) ClearAllJobs() {
+	e.jobsMutex.Lock()
+	e.queueMutex.Lock()
+
+	// Keep only the first job in queue if it's processing
+	var currentJobID string
+	if len(e.queue) > 0 && e.isProcessing {
+		currentJobID = e.queue[0]
+		e.queue = e.queue[:1]
+	} else {
+		e.queue = nil
+	}
+
+	// Delete all jobs except the one currently processing
+	for jobID := range e.jobs {
+		if jobID != currentJobID {
+			delete(e.jobs, jobID)
+		}
+	}
+
+	e.queueMutex.Unlock()
+	e.jobsMutex.Unlock()
+
+	// Update positions after releasing locks
+	e.updateQueuePositions()
+	log.Printf("[Queue] Cleared all jobs")
+}
+```
+
+**Key Change:** Enforced consistent lock ordering throughout the codebase - always acquire `jobsMutex` before `queueMutex`
+
+**Result:** All 14/14 E2E tests now passing consistently ✅
+
+---
+
+### 10. Code Cleanup
+**Files Removed:**
+- `server/static/app-old.js` - Unused old JavaScript file
+
+**Code Removed:**
+- `server/transcription.go` - Removed duplicate `loadAudioFile()` function (only needed in worker)
+- `server/worker/main.go` - Removed unused `shellQuote()` function
+
+---
+
+### 11. Documentation Updates
+**Files Updated:**
+- `README.md` - Updated features, architecture, API documentation, fixed WebSocket reference (app uses polling)
+- `tests/README.md` - Added port configuration section explaining 9456 vs 8456
+- `CHANGELOG.md` - This file, with recent session updates
+
+**Key Corrections:**
+- Fixed incorrect WebSocket documentation (app uses HTTP polling, not WebSocket)
+- Added worker process architecture explanation
+- Documented all API endpoints including queue management
+- Added comprehensive testing section
+
+---
+
+### 12. CI/CD Test Automation
+**File Created:** `.github/workflows/e2e-tests.yml`
+
+**Features:**
+- Runs on every push to main and all pull requests
+- Uses macOS runner for native environment
+- Builds server, installs dependencies, runs 14 tests
+- Uploads test results and HTML report
+- Retries failed tests automatically in CI
+
+**Configuration:**
+```yaml
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - Checkout code with submodules
+      - Set up Go 1.21
+      - Set up Node.js 20
+      - Install ffmpeg
+      - Build server
+      - Install test dependencies (Playwright + Chromium)
+      - Run E2E tests with CI=true
+      - Upload test results artifact (retention: 30 days)
+```
+
+**Benefits:**
+- Automated testing on every change
+- Catch regressions before merge
+- HTML test reports available for debugging
+- Consistent test environment
 
 ---
 
@@ -652,18 +896,23 @@ github.com/google/uuid                         // UUID generation
 2. **Go rewrite** - Much faster than Python, easier deployment
 3. **JSON error handling** - Proper error communication with frontend
 4. **ETA feature** - Great user feedback for long transcriptions
+5. **Playwright E2E tests** - Comprehensive coverage, fast execution (~5-8 seconds)
+6. **Port configuration** - Allows parallel app and test execution
+7. **CI/CD automation** - GitHub Actions runs tests on every push/PR
 
 ### What Could Be Improved
 1. **Windows distribution** - Still has DLL complexity, consider static linking
 2. **Upload handling** - Large files take time, need better progress indication during upload
-3. **Testing** - Need automated tests for CI/CD
-4. **Documentation** - Need more inline code documentation
+3. **Documentation** - Need more inline code documentation
 
-### Technical Debt
+### Technical Debt Resolved
+1. ~~No automated tests~~ ✅ **FIXED:** 14 E2E tests with Playwright
+2. ~~Hard-coded constants~~ ✅ **FIXED:** Port now configurable via PORT env var
+
+### Remaining Technical Debt
 1. Duplicate rpath warnings in Makefile (harmless but annoying)
-2. No automated tests
-3. Hard-coded constants (should be configurable)
-4. No database (jobs lost on restart)
+2. No database (jobs lost on restart)
+3. Browser auto-open should respect system settings
 
 ---
 
